@@ -149,9 +149,9 @@ function RecentRow({ title, subtitle, count, onClick }) {
 // ─── Loading State ───
 function LoadingState({ progress }) {
     return (
-        <div className="flex flex-col items-center justify-center min-h-[60vh] animate-fade-in">
+        <div className="flex flex-col items-center justify-start min-h-[60vh] animate-fade-in pt-xl">
             {/* Spinning Icon */}
-            <div className="relative mb-xl">
+            <div className="relative mb-lg">
                 <div className="w-16 h-16 rounded-full glass-panel-elevated flex items-center justify-center animate-pulse-glow">
                     <Icon name="autorenew" className="text-[28px] text-primary animate-spin-slow" />
                 </div>
@@ -161,12 +161,23 @@ function LoadingState({ progress }) {
             <h2 className="font-geist text-display-md md:text-headline-lg text-on-surface font-extrabold mb-md text-center gradient-text">
                 Analyzing role requirements...
             </h2>
-            <p className="font-geist text-body-lg text-on-surface-variant text-center max-w-lg mb-xl">
+            <p className="font-geist text-body-lg text-on-surface-variant text-center max-w-lg mb-lg">
                 Reviewing the role title and generating tailored interview questions.
             </p>
 
+            {/* Progress Bar */}
+            <div className="w-full max-w-lg mb-xl">
+                <div className="flex justify-between items-center mb-sm">
+                    <span className="font-geist text-label-md text-on-surface-variant tracking-widest uppercase">Generation Progress</span>
+                    <span className="font-geist text-label-md text-primary font-semibold">{progress}%</span>
+                </div>
+                <div className="w-full h-1 bg-surface-container-high rounded-full overflow-hidden">
+                    <div className="progress-fill h-full rounded-full" style={{ width: `${progress}%` }} />
+                </div>
+            </div>
+
             {/* Skeleton Cards */}
-            <div className="w-full max-w-3xl grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-gutter mb-xl">
+            <div className="w-full max-w-3xl grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-gutter">
                 <div className="glass-panel rounded-xl p-lg space-y-md">
                     <div className="flex items-center gap-sm">
                         <div className="skeleton w-8 h-8 rounded-full" />
@@ -197,17 +208,6 @@ function LoadingState({ progress }) {
                         <div className="skeleton h-4 w-full" />
                         <div className="skeleton h-4 w-3/4" />
                     </div>
-                </div>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="w-full max-w-lg">
-                <div className="flex justify-between items-center mb-sm">
-                    <span className="font-geist text-label-md text-on-surface-variant tracking-widest uppercase">Generation Progress</span>
-                    <span className="font-geist text-label-md text-primary font-semibold">{progress}%</span>
-                </div>
-                <div className="w-full h-1 bg-surface-container-high rounded-full overflow-hidden">
-                    <div className="progress-fill h-full rounded-full" style={{ width: `${progress}%` }} />
                 </div>
             </div>
         </div>
@@ -316,6 +316,7 @@ export default function App() {
     const [history, setHistory] = useState([])
     const [isDark, setIsDark] = useState(true)
     const progressRef = useRef(null)
+    const requestRef = useRef(0)
 
     // Handle theme initialization and toggling
     useEffect(() => {
@@ -356,23 +357,26 @@ export default function App() {
         }
     }, [loading])
 
-    const handleSubmit = async (e, titleOverride) => {
-        if (e) e.preventDefault()
-        const title = titleOverride || jobTitle
-        if (!title.trim()) return
+    const generateQuestions = async ({ title, append = false }) => {
+        const trimmedTitle = title.trim()
+        const requestId = requestRef.current + 1
+        requestRef.current = requestId
 
-        if (titleOverride) setJobTitle(titleOverride)
         window.scrollTo({ top: 0, behavior: 'smooth' })
         setLoading(true)
         setError(null)
-        setQuestions([])
+        if (!append) setQuestions([])
+
+        const controller = new AbortController()
+        const timeoutId = window.setTimeout(() => controller.abort(), 30000)
 
         try {
             const baseUrl = import.meta.env.VITE_BACKEND_URL || ''
             const response = await fetch(`${baseUrl}/api/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jobTitle: title, seniorityLevel }),
+                body: JSON.stringify({ jobTitle: trimmedTitle, seniorityLevel }),
+                signal: controller.signal,
             })
 
             const data = await response.json()
@@ -381,49 +385,40 @@ export default function App() {
                 throw new Error(data.error || 'Something went wrong while generating questions.')
             }
 
-            setQuestions(data.questions || [])
-            if (data.questions?.length) {
-                setHistory(prev => [{ title, count: data.questions.length, timestamp: Date.now() }, ...prev])
+            if (requestRef.current !== requestId) return
+
+            const nextQuestions = data.questions || []
+            setQuestions(prev => append ? [...prev, ...nextQuestions] : nextQuestions)
+            if (nextQuestions.length) {
+                setHistory(prev => [{ title: trimmedTitle, count: nextQuestions.length, timestamp: Date.now() }, ...prev])
             }
         } catch (err) {
-            setError(err.message)
+            if (requestRef.current !== requestId) return
+
+            const message = err.name === 'AbortError'
+                ? 'The AI service took too long to respond. Please try again.'
+                : err.message
+            setError(message)
         } finally {
-            setLoading(false)
+            window.clearTimeout(timeoutId)
+            if (requestRef.current === requestId) setLoading(false)
         }
     }
 
-    const handleGenerateMore = async () => {
-        const title = jobTitle
+    const handleSubmit = async (e, titleOverride) => {
+        if (e) e.preventDefault()
+        const title = (titleOverride || jobTitle).trim()
         if (!title.trim()) return
 
-        window.scrollTo({ top: 0, behavior: 'smooth' })
-        setLoading(true)
-        setError(null)
+        setJobTitle(title)
+        await generateQuestions({ title })
+    }
 
-        try {
-            const baseUrl = import.meta.env.VITE_BACKEND_URL || ''
-            const response = await fetch(`${baseUrl}/api/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jobTitle: title, seniorityLevel }),
-            })
+    const handleGenerateMore = async () => {
+        const title = jobTitle.trim()
+        if (!title.trim()) return
 
-            const data = await response.json()
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Something went wrong while generating questions.')
-            }
-
-            // Append new questions to existing ones
-            setQuestions(prev => [...prev, ...(data.questions || [])])
-            if (data.questions?.length) {
-                setHistory(prev => [{ title, count: data.questions.length, timestamp: Date.now() }, ...prev])
-            }
-        } catch (err) {
-            setError(err.message)
-        } finally {
-            setLoading(false)
-        }
+        await generateQuestions({ title, append: true })
     }
 
     const generateForTitle = (title) => {
@@ -431,9 +426,11 @@ export default function App() {
     }
 
     const handleReset = () => {
+        requestRef.current += 1
         setQuestions([])
         setError(null)
         setProgress(0)
+        setLoading(false)
         setCurrentTab('Dashboard')
     }
 
@@ -623,6 +620,42 @@ export default function App() {
                                 </button>
                             </div>
                         </div>
+
+                        <form
+                            onSubmit={handleSubmit}
+                            className="glass-panel rounded-xl p-md mb-xl flex flex-col md:flex-row items-stretch md:items-center gap-sm"
+                        >
+                            <div className="flex items-center flex-grow bg-surface-container-high/40 rounded-lg border border-outline-variant/20">
+                                <Icon name="search" className="text-[22px] text-outline ml-sm shrink-0" />
+                                <input
+                                    className="w-full bg-transparent border-none text-on-surface font-geist text-body-md focus:ring-0 outline-none placeholder-outline py-sm px-sm"
+                                    placeholder="Enter a new job title..."
+                                    type="text"
+                                    value={jobTitle}
+                                    onChange={e => setJobTitle(e.target.value)}
+                                    disabled={loading}
+                                />
+                            </div>
+                            <select
+                                value={seniorityLevel}
+                                onChange={e => setSeniorityLevel(e.target.value)}
+                                disabled={loading}
+                                className="w-full md:w-auto bg-surface-container-high border border-outline-variant/30 text-on-surface font-geist text-label-md rounded-lg px-md py-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none cursor-pointer appearance-none disabled:opacity-40"
+                                style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%23908fa0' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E")`, backgroundPosition: 'right 8px center', backgroundRepeat: 'no-repeat', backgroundSize: '20px', paddingRight: '32px' }}
+                            >
+                                {SENIORITY_LEVELS.map(level => (
+                                    <option key={level} value={level}>{level}</option>
+                                ))}
+                            </select>
+                            <button
+                                type="submit"
+                                disabled={loading || !jobTitle.trim()}
+                                className="w-full md:w-auto flex items-center justify-center gap-xs px-lg py-sm rounded-lg bg-gradient-to-r from-primary-container to-inverse-primary text-on-primary font-geist text-label-md font-bold glow-button whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+                            >
+                                <Icon name="auto_awesome" className="text-[18px]" fill />
+                                Generate
+                            </button>
+                        </form>
 
                         {/* Question Cards */}
                         <div className="space-y-lg">
