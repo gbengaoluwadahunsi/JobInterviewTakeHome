@@ -311,6 +311,7 @@ export default function App() {
     const [questions, setQuestions] = useState([])
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
+    const [warning, setWarning] = useState(null)
     const [progress, setProgress] = useState(0)
     const [currentTab, setCurrentTab] = useState('Dashboard')
     const [history, setHistory] = useState([])
@@ -365,6 +366,7 @@ export default function App() {
         window.scrollTo({ top: 0, behavior: 'smooth' })
         setLoading(true)
         setError(null)
+        setWarning(null)
         if (!append) setQuestions([])
 
         const controller = new AbortController()
@@ -389,6 +391,7 @@ export default function App() {
 
             const nextQuestions = data.questions || []
             setQuestions(prev => append ? [...prev, ...nextQuestions] : nextQuestions)
+            setWarning(data.warning || null)
             if (nextQuestions.length) {
                 setHistory(prev => [{ title: trimmedTitle, count: nextQuestions.length, timestamp: Date.now() }, ...prev])
             }
@@ -429,6 +432,7 @@ export default function App() {
         requestRef.current += 1
         setQuestions([])
         setError(null)
+        setWarning(null)
         setProgress(0)
         setLoading(false)
         setCurrentTab('Dashboard')
@@ -656,6 +660,12 @@ export default function App() {
                                 Generate
                             </button>
                         </form>
+
+                        {warning && (
+                            <div className="glass-panel rounded-lg border border-secondary/20 px-md py-sm mb-xl text-secondary font-geist text-body-md">
+                                {warning}
+                            </div>
+                        )}
 
                         {/* Question Cards */}
                         <div className="space-y-lg">
